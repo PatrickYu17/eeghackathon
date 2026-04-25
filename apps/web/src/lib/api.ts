@@ -1,4 +1,11 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
+  /\/+$/,
+  ""
+);
+
+function apiUrl(path: string) {
+  return `${API_URL}/${path.replace(/^\/+/, "")}`;
+}
 
 async function getErrorMessage(res: Response) {
   const errorBody = await res.json().catch(() => null);
@@ -14,7 +21,7 @@ async function getErrorMessage(res: Response) {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = `${API_URL}${path}`;
+  const url = apiUrl(path);
   let res: Response;
 
   try {
@@ -41,7 +48,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function apiBlob(path: string, init?: RequestInit) {
-  const url = `${API_URL}${path}`;
+  const url = apiUrl(path);
   let res: Response;
 
   try {
