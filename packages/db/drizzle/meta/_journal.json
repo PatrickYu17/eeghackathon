@@ -8,6 +8,20 @@
       "when": 1777075783378,
       "tag": "0000_elite_mojo",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777078921263,
+      "tag": "0001_parched_terror",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777129919611,
+      "tag": "0002_staff_code_removal",
+      "breakpoints": true
     }
   ]
 }

@@ -1,13 +1,63 @@
-CREATE TYPE "public"."audit_actor_type" AS ENUM('bar_account', 'manager', 'staff', 'system');--> statement-breakpoint
-CREATE TYPE "public"."bar_account_status" AS ENUM('active', 'suspended', 'deleted');--> statement-breakpoint
-CREATE TYPE "public"."inventory_count_status" AS ENUM('draft', 'submitted', 'approved', 'rejected');--> statement-breakpoint
-CREATE TYPE "public"."inventory_unit_type" AS ENUM('bottle', 'case', 'keg', 'can', 'each', 'liter', 'milliliter', 'ounce', 'pound', 'gram');--> statement-breakpoint
-CREATE TYPE "public"."manager_role" AS ENUM('manager', 'admin_manager');--> statement-breakpoint
-CREATE TYPE "public"."product_category" AS ENUM('liquor', 'beer', 'wine', 'mixer', 'food', 'other');--> statement-breakpoint
-CREATE TYPE "public"."purchase_order_status" AS ENUM('draft', 'submitted', 'partially_received', 'received', 'cancelled');--> statement-breakpoint
-CREATE TYPE "public"."stock_adjustment_type" AS ENUM('manual_correction', 'receiving', 'transfer', 'count_reconciliation', 'damage', 'return', 'other');--> statement-breakpoint
-CREATE TYPE "public"."usage_reason" AS ENUM('pour', 'event', 'comp', 'recipe', 'manual_entry', 'other');--> statement-breakpoint
-CREATE TYPE "public"."waste_reason" AS ENUM('spill', 'breakage', 'expired', 'overpour', 'comped', 'other');--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."audit_actor_type" AS ENUM('bar_account', 'manager', 'staff', 'system');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."bar_account_status" AS ENUM('active', 'suspended', 'deleted');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."inventory_count_status" AS ENUM('draft', 'submitted', 'approved', 'rejected');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."inventory_unit_type" AS ENUM('bottle', 'case', 'keg', 'can', 'each', 'liter', 'milliliter', 'ounce', 'pound', 'gram');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."manager_role" AS ENUM('manager', 'admin_manager');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."product_category" AS ENUM('liquor', 'beer', 'wine', 'mixer', 'food', 'other');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."purchase_order_status" AS ENUM('draft', 'submitted', 'partially_received', 'received', 'cancelled');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."stock_adjustment_type" AS ENUM('manual_correction', 'receiving', 'transfer', 'count_reconciliation', 'damage', 'return', 'other');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."usage_reason" AS ENUM('pour', 'event', 'comp', 'recipe', 'manual_entry', 'other');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."waste_reason" AS ENUM('spill', 'breakage', 'expired', 'overpour', 'comped', 'other');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "account" (
 	"id" text PRIMARY KEY NOT NULL,
 	"account_id" text NOT NULL,

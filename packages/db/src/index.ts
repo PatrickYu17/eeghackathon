@@ -11,3 +11,4 @@ if (!connectionString) {
 const client = postgres(connectionString, { prepare: false });
 export const db = drizzle(client, { schema });
 export type DB = typeof db;
+export * from "./schema";

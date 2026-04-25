@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "bun run --hot src/index.ts",
+    "dev": "bun --env-file=../../.env run --hot src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
@@ -11,6 +11,7 @@
     "@hono/node-server": "^1.13.0",
     "@repo/db": "workspace:*",
     "better-auth": "^0.6.0",
+    "drizzle-orm": "^0.36.0",
     "hono": "^4.6.0",
     "zod": "^3.23.0"
   },

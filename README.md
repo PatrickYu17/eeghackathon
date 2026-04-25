@@ -32,20 +32,38 @@ Bun monorepo scaffold with Next.js frontend and Hono REST API.
 2. **Set up environment**
    ```bash
    cp .env.example .env
-   # Edit .env with your DATABASE_URL and secrets
+   ```
+   The default `.env` is already configured for local Docker Postgres.
+
+3. **Ensure Docker permissions (one-time)**
+   If `docker` commands require `sudo`, add your user to the `docker` group and restart your shell:
+   ```bash
+   sudo usermod -aG docker $USER
+   newgrp docker
    ```
 
-3. **Push database schema**
+4. **Start the local database**
+   ```bash
+   bun run db:up
+   ```
+
+5. **Push database schema**
    ```bash
    bun run db:push
    ```
 
-4. **Start dev servers**
+6. **Start dev servers**
    ```bash
-   bun dev
+   bun run dev
    ```
+   This will start Docker Postgres (if not already running), wait for it to be ready, and then launch the dev servers.
    - Web: http://localhost:3000
    - API: http://localhost:3001
+
+To stop the local database:
+```bash
+bun run db:down
+```
 
 ## Deploy
 

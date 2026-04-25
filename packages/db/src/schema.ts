@@ -1,6 +1,7 @@
 import { relations } from "drizzle-orm";
 import {
   boolean,
+  date,
   index,
   integer,
   jsonb,
@@ -37,6 +38,64 @@ export const productCategoryEnum = pgEnum("product_category", [
   "mixer",
   "food",
   "other",
+]);
+
+export const inventoryCategoryTypeEnum = pgEnum("inventory_category_type", [
+  "spirit",
+  "liquor",
+  "beer",
+  "wine",
+  "mixer",
+  "keg",
+  "food",
+  "custom",
+  "other",
+]);
+
+export const appSessionActorTypeEnum = pgEnum("app_session_actor_type", [
+  "manager",
+  "staff",
+]);
+
+export const posEstimateSourceEnum = pgEnum("pos_estimate_source", [
+  "manual",
+  "mock",
+  "pos",
+]);
+
+export const barNightStatusEnum = pgEnum("bar_night_status", [
+  "open",
+  "closed",
+]);
+
+export const staffShiftStatusEnum = pgEnum("staff_shift_status", [
+  "active",
+  "ended",
+]);
+
+export const alertTypeEnum = pgEnum("alert_type", [
+  "low_stock",
+  "overpour",
+  "keg_check",
+  "reorder",
+  "variance",
+  "waste",
+  "sales_drop",
+  "system",
+  "other",
+]);
+
+export const alertSeverityEnum = pgEnum("alert_severity", [
+  "info",
+  "warning",
+  "critical",
+]);
+
+export const alertStatusEnum = pgEnum("alert_status", [
+  "open",
+  "acknowledged",
+  "resolved",
+  "dismissed",
 ]);
 
 export const inventoryUnitTypeEnum = pgEnum("inventory_unit_type", [
@@ -165,6 +224,11 @@ export const barAccounts = pgTable(
     contactEmail: text("contact_email"),
     timezone: text("timezone").notNull().default("UTC"),
     currency: text("currency").notNull().default("USD"),
+    onboardingCompletedAt: timestamp("onboarding_completed_at", {
+      withTimezone: true,
+    }),
+    location: text("location"),
+    barSize: text("bar_size"),
     status: barAccountStatusEnum("status").notNull().default("active"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -187,6 +251,11 @@ export const managers = pgTable(
     userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
     name: text("name").notNull(),
     accessCodeHash: text("access_code_hash").notNull(),
+    accessCodeUpdatedAt: timestamp("access_code_updated_at", {
+      withTimezone: true,
+    }),
+    failedLoginCount: integer("failed_login_count").notNull().default(0),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
     role: managerRoleEnum("role").notNull().default("manager"),
     isActive: boolean("is_active").notNull().default(true),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
@@ -216,6 +285,7 @@ export const staffMembers = pgTable(
     name: text("name").notNull(),
     role: text("role"),
     isActive: boolean("is_active").notNull().default(true),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -228,6 +298,39 @@ export const staffMembers = pgTable(
       table.isActive
     ),
     userIdIdx: index("staff_members_user_id_idx").on(table.userId),
+    barAccountNameIdx: uniqueIndex("staff_members_bar_account_name_idx").on(
+      table.barAccountId,
+      table.name
+    ),
+  })
+);
+
+export const inventoryCategories = pgTable(
+  "inventory_categories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    barAccountId: uuid("bar_account_id")
+      .notNull()
+      .references(() => barAccounts.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    type: inventoryCategoryTypeEnum("type").notNull().default("other"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    barAccountIdIdx: index("inventory_categories_bar_account_id_idx").on(
+      table.barAccountId
+    ),
+    typeIdx: index("inventory_categories_bar_account_type_idx").on(
+      table.barAccountId,
+      table.type
+    ),
+    nameIdx: uniqueIndex("inventory_categories_bar_account_name_idx").on(
+      table.barAccountId,
+      table.name
+    ),
   })
 );
 
@@ -268,6 +371,9 @@ export const products = pgTable(
     supplierId: uuid("supplier_id").references(() => suppliers.id, {
       onDelete: "set null",
     }),
+    categoryId: uuid("category_id").references(() => inventoryCategories.id, {
+      onDelete: "set null",
+    }),
     name: text("name").notNull(),
     brand: text("brand"),
     category: productCategoryEnum("category").notNull().default("other"),
@@ -295,7 +401,236 @@ export const products = pgTable(
       table.barAccountId,
       table.category
     ),
+    categoryIdIdx: index("products_category_id_idx").on(table.categoryId),
     supplierIdIdx: index("products_supplier_id_idx").on(table.supplierId),
+  })
+);
+
+export const appSessions = pgTable(
+  "app_sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    barAccountId: uuid("bar_account_id")
+      .notNull()
+      .references(() => barAccounts.id, { onDelete: "cascade" }),
+    actorType: appSessionActorTypeEnum("actor_type").notNull(),
+    managerId: uuid("manager_id").references(() => managers.id, {
+      onDelete: "cascade",
+    }),
+    staffMemberId: uuid("staff_member_id").references(() => staffMembers.id, {
+      onDelete: "cascade",
+    }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    barAccountIdIdx: index("app_sessions_bar_account_id_idx").on(
+      table.barAccountId
+    ),
+    tokenHashIdx: uniqueIndex("app_sessions_token_hash_idx").on(
+      table.tokenHash
+    ),
+    managerIdIdx: index("app_sessions_manager_id_idx").on(table.managerId),
+    staffMemberIdIdx: index("app_sessions_staff_member_id_idx").on(
+      table.staffMemberId
+    ),
+    expiresAtIdx: index("app_sessions_expires_at_idx").on(table.expiresAt),
+  })
+);
+
+export const barNights = pgTable(
+  "bar_nights",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    barAccountId: uuid("bar_account_id")
+      .notNull()
+      .references(() => barAccounts.id, { onDelete: "cascade" }),
+    openedByManagerId: uuid("opened_by_manager_id").references(
+      () => managers.id,
+      { onDelete: "set null" }
+    ),
+    closedByManagerId: uuid("closed_by_manager_id").references(
+      () => managers.id,
+      { onDelete: "set null" }
+    ),
+    businessDate: date("business_date").notNull(),
+    status: barNightStatusEnum("status").notNull().default("open"),
+    openedAt: timestamp("opened_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    notes: text("notes"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    barAccountIdIdx: index("bar_nights_bar_account_id_idx").on(
+      table.barAccountId
+    ),
+    businessDateIdx: uniqueIndex("bar_nights_bar_account_business_date_idx").on(
+      table.barAccountId,
+      table.businessDate
+    ),
+    statusIdx: index("bar_nights_bar_account_status_idx").on(
+      table.barAccountId,
+      table.status
+    ),
+  })
+);
+
+export const staffShifts = pgTable(
+  "staff_shifts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    barAccountId: uuid("bar_account_id")
+      .notNull()
+      .references(() => barAccounts.id, { onDelete: "cascade" }),
+    barNightId: uuid("bar_night_id")
+      .notNull()
+      .references(() => barNights.id, { onDelete: "cascade" }),
+    staffMemberId: uuid("staff_member_id")
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: "cascade" }),
+    openedByManagerId: uuid("opened_by_manager_id").references(
+      () => managers.id,
+      { onDelete: "set null" }
+    ),
+    closedByManagerId: uuid("closed_by_manager_id").references(
+      () => managers.id,
+      { onDelete: "set null" }
+    ),
+    status: staffShiftStatusEnum("status").notNull().default("active"),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    notes: text("notes"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    barAccountIdIdx: index("staff_shifts_bar_account_id_idx").on(
+      table.barAccountId
+    ),
+    barNightIdIdx: index("staff_shifts_bar_night_id_idx").on(
+      table.barNightId
+    ),
+    staffMemberIdIdx: index("staff_shifts_staff_member_id_idx").on(
+      table.staffMemberId
+    ),
+    statusIdx: index("staff_shifts_bar_account_status_idx").on(
+      table.barAccountId,
+      table.status
+    ),
+  })
+);
+
+export const posEstimates = pgTable(
+  "pos_estimates",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    barAccountId: uuid("bar_account_id")
+      .notNull()
+      .references(() => barAccounts.id, { onDelete: "cascade" }),
+    barNightId: uuid("bar_night_id")
+      .notNull()
+      .references(() => barNights.id, { onDelete: "cascade" }),
+    staffShiftId: uuid("staff_shift_id").references(() => staffShifts.id, {
+      onDelete: "set null",
+    }),
+    categoryId: uuid("category_id").references(() => inventoryCategories.id, {
+      onDelete: "set null",
+    }),
+    productId: uuid("product_id").references(() => products.id, {
+      onDelete: "set null",
+    }),
+    enteredByManagerId: uuid("entered_by_manager_id").references(
+      () => managers.id,
+      { onDelete: "set null" }
+    ),
+    enteredByStaffId: uuid("entered_by_staff_id").references(
+      () => staffMembers.id,
+      { onDelete: "set null" }
+    ),
+    drinkCount: numeric("drink_count", { precision: 12, scale: 3 }).notNull(),
+    source: posEstimateSourceEnum("source").notNull().default("manual"),
+    grossSales: numeric("gross_sales", { precision: 12, scale: 2 }),
+    netSales: numeric("net_sales", { precision: 12, scale: 2 }),
+    cashSales: numeric("cash_sales", { precision: 12, scale: 2 }),
+    cardSales: numeric("card_sales", { precision: 12, scale: 2 }),
+    comps: numeric("comps", { precision: 12, scale: 2 }),
+    voids: numeric("voids", { precision: 12, scale: 2 }),
+    notes: text("notes"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    barAccountIdIdx: index("pos_estimates_bar_account_id_idx").on(
+      table.barAccountId
+    ),
+    barNightIdIdx: index("pos_estimates_bar_night_id_idx").on(
+      table.barNightId
+    ),
+    staffShiftIdIdx: index("pos_estimates_staff_shift_id_idx").on(
+      table.staffShiftId
+    ),
+    categoryIdx: index("pos_estimates_category_id_idx").on(table.categoryId),
+    productIdx: index("pos_estimates_product_id_idx").on(table.productId),
+  })
+);
+
+export const alerts = pgTable(
+  "alerts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    barAccountId: uuid("bar_account_id")
+      .notNull()
+      .references(() => barAccounts.id, { onDelete: "cascade" }),
+    barNightId: uuid("bar_night_id").references(() => barNights.id, {
+      onDelete: "set null",
+    }),
+    productId: uuid("product_id").references(() => products.id, {
+      onDelete: "set null",
+    }),
+    categoryId: uuid("category_id").references(() => inventoryCategories.id, {
+      onDelete: "set null",
+    }),
+    acknowledgedByManagerId: uuid("acknowledged_by_manager_id").references(
+      () => managers.id,
+      { onDelete: "set null" }
+    ),
+    type: alertTypeEnum("type").notNull().default("other"),
+    severity: alertSeverityEnum("severity").notNull().default("info"),
+    status: alertStatusEnum("status").notNull().default("open"),
+    title: text("title").notNull(),
+    message: text("message"),
+    metadataJson: jsonb("metadata_json").$type<Record<string, unknown>>(),
+    triggeredAt: timestamp("triggered_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    barAccountIdIdx: index("alerts_bar_account_id_idx").on(table.barAccountId),
+    statusIdx: index("alerts_bar_account_status_idx").on(
+      table.barAccountId,
+      table.status
+    ),
+    triggeredAtIdx: index("alerts_bar_account_triggered_at_idx").on(
+      table.barAccountId,
+      table.triggeredAt
+    ),
+    productIdx: index("alerts_product_id_idx").on(table.productId),
+    categoryIdx: index("alerts_category_id_idx").on(table.categoryId),
   })
 );
 
@@ -466,12 +801,30 @@ export const usageLogs = pgTable(
     managerId: uuid("manager_id").references(() => managers.id, {
       onDelete: "set null",
     }),
+    barNightId: uuid("bar_night_id").references(() => barNights.id, {
+      onDelete: "set null",
+    }),
+    staffShiftId: uuid("staff_shift_id").references(() => staffShifts.id, {
+      onDelete: "set null",
+    }),
+    categoryId: uuid("category_id").references(() => inventoryCategories.id, {
+      onDelete: "set null",
+    }),
     quantityUsed: numeric("quantity_used", { precision: 12, scale: 3 }).notNull(),
     reason: usageReasonEnum("reason").notNull().default("manual_entry"),
     occurredAt: timestamp("occurred_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
     notes: text("notes"),
+    reversedAt: timestamp("reversed_at", { withTimezone: true }),
+    reversedByManagerId: uuid("reversed_by_manager_id").references(
+      () => managers.id,
+      { onDelete: "set null" }
+    ),
+    reversedByStaffId: uuid("reversed_by_staff_id").references(
+      () => staffMembers.id,
+      { onDelete: "set null" }
+    ),
     createdAt: createdAt(),
   },
   (table) => ({
@@ -486,6 +839,9 @@ export const usageLogs = pgTable(
     staffMemberIdx: index("usage_logs_staff_member_id_idx").on(
       table.staffMemberId
     ),
+    barNightIdx: index("usage_logs_bar_night_id_idx").on(table.barNightId),
+    staffShiftIdx: index("usage_logs_staff_shift_id_idx").on(table.staffShiftId),
+    categoryIdx: index("usage_logs_category_id_idx").on(table.categoryId),
   })
 );
 
@@ -737,8 +1093,14 @@ export const barAccountRelations = relations(barAccounts, ({ one, many }) => ({
   }),
   managers: many(managers),
   staffMembers: many(staffMembers),
+  inventoryCategories: many(inventoryCategories),
   suppliers: many(suppliers),
   products: many(products),
+  appSessions: many(appSessions),
+  barNights: many(barNights),
+  staffShifts: many(staffShifts),
+  posEstimates: many(posEstimates),
+  alerts: many(alerts),
   inventoryLocations: many(inventoryLocations),
   inventoryItems: many(inventoryItems),
   inventoryCounts: many(inventoryCounts),
@@ -773,6 +1135,19 @@ export const staffMemberRelations = relations(staffMembers, ({ one }) => ({
   }),
 }));
 
+export const inventoryCategoryRelations = relations(
+  inventoryCategories,
+  ({ one, many }) => ({
+    barAccount: one(barAccounts, {
+      fields: [inventoryCategories.barAccountId],
+      references: [barAccounts.id],
+    }),
+    products: many(products),
+    usageLogs: many(usageLogs),
+    alerts: many(alerts),
+  })
+);
+
 export const supplierRelations = relations(suppliers, ({ one, many }) => ({
   barAccount: one(barAccounts, {
     fields: [suppliers.barAccountId],
@@ -791,12 +1166,130 @@ export const productRelations = relations(products, ({ one, many }) => ({
     fields: [products.supplierId],
     references: [suppliers.id],
   }),
+  inventoryCategory: one(inventoryCategories, {
+    fields: [products.categoryId],
+    references: [inventoryCategories.id],
+  }),
   inventoryItems: many(inventoryItems),
   inventoryCountLines: many(inventoryCountLines),
   usageLogs: many(usageLogs),
   wasteLogs: many(wasteLogs),
   stockAdjustments: many(stockAdjustments),
   purchaseOrderLines: many(purchaseOrderLines),
+  alerts: many(alerts),
+}));
+
+export const appSessionRelations = relations(appSessions, ({ one }) => ({
+  barAccount: one(barAccounts, {
+    fields: [appSessions.barAccountId],
+    references: [barAccounts.id],
+  }),
+  manager: one(managers, {
+    fields: [appSessions.managerId],
+    references: [managers.id],
+  }),
+  staffMember: one(staffMembers, {
+    fields: [appSessions.staffMemberId],
+    references: [staffMembers.id],
+  }),
+}));
+
+export const barNightRelations = relations(barNights, ({ one, many }) => ({
+  barAccount: one(barAccounts, {
+    fields: [barNights.barAccountId],
+    references: [barAccounts.id],
+  }),
+  openedByManager: one(managers, {
+    fields: [barNights.openedByManagerId],
+    references: [managers.id],
+  }),
+  closedByManager: one(managers, {
+    fields: [barNights.closedByManagerId],
+    references: [managers.id],
+  }),
+  staffShifts: many(staffShifts),
+  posEstimates: many(posEstimates),
+  alerts: many(alerts),
+  usageLogs: many(usageLogs),
+}));
+
+export const staffShiftRelations = relations(staffShifts, ({ one, many }) => ({
+  barAccount: one(barAccounts, {
+    fields: [staffShifts.barAccountId],
+    references: [barAccounts.id],
+  }),
+  barNight: one(barNights, {
+    fields: [staffShifts.barNightId],
+    references: [barNights.id],
+  }),
+  staffMember: one(staffMembers, {
+    fields: [staffShifts.staffMemberId],
+    references: [staffMembers.id],
+  }),
+  openedByManager: one(managers, {
+    fields: [staffShifts.openedByManagerId],
+    references: [managers.id],
+  }),
+  closedByManager: one(managers, {
+    fields: [staffShifts.closedByManagerId],
+    references: [managers.id],
+  }),
+  posEstimates: many(posEstimates),
+  usageLogs: many(usageLogs),
+}));
+
+export const posEstimateRelations = relations(posEstimates, ({ one }) => ({
+  barAccount: one(barAccounts, {
+    fields: [posEstimates.barAccountId],
+    references: [barAccounts.id],
+  }),
+  barNight: one(barNights, {
+    fields: [posEstimates.barNightId],
+    references: [barNights.id],
+  }),
+  staffShift: one(staffShifts, {
+    fields: [posEstimates.staffShiftId],
+    references: [staffShifts.id],
+  }),
+  category: one(inventoryCategories, {
+    fields: [posEstimates.categoryId],
+    references: [inventoryCategories.id],
+  }),
+  product: one(products, {
+    fields: [posEstimates.productId],
+    references: [products.id],
+  }),
+  enteredByManager: one(managers, {
+    fields: [posEstimates.enteredByManagerId],
+    references: [managers.id],
+  }),
+  enteredByStaff: one(staffMembers, {
+    fields: [posEstimates.enteredByStaffId],
+    references: [staffMembers.id],
+  }),
+}));
+
+export const alertRelations = relations(alerts, ({ one }) => ({
+  barAccount: one(barAccounts, {
+    fields: [alerts.barAccountId],
+    references: [barAccounts.id],
+  }),
+  barNight: one(barNights, {
+    fields: [alerts.barNightId],
+    references: [barNights.id],
+  }),
+  product: one(products, {
+    fields: [alerts.productId],
+    references: [products.id],
+  }),
+  category: one(inventoryCategories, {
+    fields: [alerts.categoryId],
+    references: [inventoryCategories.id],
+  }),
+  acknowledgedByManager: one(managers, {
+    fields: [alerts.acknowledgedByManagerId],
+    references: [managers.id],
+  }),
 }));
 
 export const inventoryLocationRelations = relations(
@@ -898,6 +1391,26 @@ export const usageLogRelations = relations(usageLogs, ({ one }) => ({
   manager: one(managers, {
     fields: [usageLogs.managerId],
     references: [managers.id],
+  }),
+  barNight: one(barNights, {
+    fields: [usageLogs.barNightId],
+    references: [barNights.id],
+  }),
+  staffShift: one(staffShifts, {
+    fields: [usageLogs.staffShiftId],
+    references: [staffShifts.id],
+  }),
+  category: one(inventoryCategories, {
+    fields: [usageLogs.categoryId],
+    references: [inventoryCategories.id],
+  }),
+  reversedByManager: one(managers, {
+    fields: [usageLogs.reversedByManagerId],
+    references: [managers.id],
+  }),
+  reversedByStaff: one(staffMembers, {
+    fields: [usageLogs.reversedByStaffId],
+    references: [staffMembers.id],
   }),
 }));
 
@@ -1013,11 +1526,29 @@ export type NewManager = typeof managers.$inferInsert;
 export type StaffMember = typeof staffMembers.$inferSelect;
 export type NewStaffMember = typeof staffMembers.$inferInsert;
 
+export type InventoryCategory = typeof inventoryCategories.$inferSelect;
+export type NewInventoryCategory = typeof inventoryCategories.$inferInsert;
+
 export type Supplier = typeof suppliers.$inferSelect;
 export type NewSupplier = typeof suppliers.$inferInsert;
 
 export type Product = typeof products.$inferSelect;
 export type NewProduct = typeof products.$inferInsert;
+
+export type AppSession = typeof appSessions.$inferSelect;
+export type NewAppSession = typeof appSessions.$inferInsert;
+
+export type BarNight = typeof barNights.$inferSelect;
+export type NewBarNight = typeof barNights.$inferInsert;
+
+export type StaffShift = typeof staffShifts.$inferSelect;
+export type NewStaffShift = typeof staffShifts.$inferInsert;
+
+export type PosEstimate = typeof posEstimates.$inferSelect;
+export type NewPosEstimate = typeof posEstimates.$inferInsert;
+
+export type Alert = typeof alerts.$inferSelect;
+export type NewAlert = typeof alerts.$inferInsert;
 
 export type InventoryLocation = typeof inventoryLocations.$inferSelect;
 export type NewInventoryLocation = typeof inventoryLocations.$inferInsert;
