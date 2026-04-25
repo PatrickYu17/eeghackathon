@@ -634,6 +634,42 @@ export const alerts = pgTable(
   })
 );
 
+export const aiReports = pgTable(
+  "ai_reports",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    barAccountId: uuid("bar_account_id")
+      .notNull()
+      .references(() => barAccounts.id, { onDelete: "cascade" }),
+    barNightId: uuid("bar_night_id")
+      .notNull()
+      .references(() => barNights.id, { onDelete: "cascade" }),
+    generatedByManagerId: uuid("generated_by_manager_id").references(
+      () => managers.id,
+      { onDelete: "set null" }
+    ),
+    provider: text("provider").notNull().default("teracast"),
+    model: text("model").notNull(),
+    status: text("status").$type<"completed" | "failed">().notNull().default("completed"),
+    title: text("title").notNull(),
+    executiveSummary: text("executive_summary"),
+    reportJson: jsonb("report_json").$type<Record<string, unknown>>(),
+    markdown: text("markdown"),
+    sourceDataJson: jsonb("source_data_json").$type<Record<string, unknown>>(),
+    errorMessage: text("error_message"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    barAccountIdIdx: index("ai_reports_bar_account_id_idx").on(table.barAccountId),
+    barNightIdIdx: index("ai_reports_bar_night_id_idx").on(table.barNightId),
+    createdAtIdx: index("ai_reports_bar_account_created_at_idx").on(
+      table.barAccountId,
+      table.createdAt
+    ),
+  })
+);
+
 export const inventoryLocations = pgTable(
   "inventory_locations",
   {
