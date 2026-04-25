@@ -260,8 +260,9 @@ function clearBarContext(c: Context) {
 }
 
 async function hashCode(code: string) {
-  if (typeof Bun !== "undefined" && Bun.password) {
-    return Bun.password.hash(code);
+  const bunPassword = getBunPasswordRuntime();
+  if (bunPassword) {
+    return bunPassword.hash(code);
   }
 
   return code;
@@ -271,15 +272,26 @@ async function verifyCode(code: string, hash?: string | null) {
   if (!hash) return false;
   if (code === hash) return true;
 
-  if (typeof Bun !== "undefined" && Bun.password) {
+  const bunPassword = getBunPasswordRuntime();
+  if (bunPassword) {
     try {
-      return await Bun.password.verify(code, hash);
+      return await bunPassword.verify(code, hash);
     } catch {
       return false;
     }
   }
 
   return false;
+}
+
+function getBunPasswordRuntime() {
+  type BunPasswordRuntime = {
+    hash(value: string): string | Promise<string>;
+    verify(value: string, hash: string): boolean | Promise<boolean>;
+  };
+
+  return (globalThis as typeof globalThis & { Bun?: { password?: BunPasswordRuntime } }).Bun
+    ?.password;
 }
 
 function readIp(c: Context) {
