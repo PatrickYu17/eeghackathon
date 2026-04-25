@@ -8,10 +8,10 @@ const app = new Hono();
 app.use(
   "*",
   cors({
-    origin: [process.env.WEB_URL || "http://localhost:3000"],
+    origin: "*",
     allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization"],
     credentials: true,
+    maxAge: 86400,
   })
 );
 
