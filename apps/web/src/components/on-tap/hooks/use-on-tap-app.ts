@@ -7,6 +7,9 @@ import {
   accountLogin,
   clearBarContextSession,
   getBarContext,
+  downloadAiReport,
+  generateAiReport,
+  getAiReports,
   getOnTapSession,
   registerBarAccount,
   managerLogin,
@@ -28,6 +31,7 @@ import {
   saveInventorySetup,
 } from "../../../lib/on-tap-api";
 import type {
+  AiReport,
   BarAccountSummary,
   BartenderDashboardResponse,
   BossDashboardResponse,
@@ -77,6 +81,9 @@ export function useOnTapApp() {
   const [previousNights, setPreviousNights] = useState<ManagerNightSummary[]>([]);
   const [selectedNightId, setSelectedNightId] = useState<string | null>(null);
   const [managerLoading, setManagerLoading] = useState(false);
+  const [aiReports, setAiReports] = useState<AiReport[]>([]);
+  const [aiReportsLoading, setAiReportsLoading] = useState(false);
+  const [aiReportGenerating, setAiReportGenerating] = useState(false);
 
   /* ─── Settings ─── */
   const [settingsData, setSettingsData] = useState<{
@@ -231,6 +238,7 @@ export function useOnTapApp() {
     setBartenderData(null);
     setManagerData(null);
     setPreviousNights([]);
+    setAiReports([]);
     setSettingsData(null);
     setView("landing");
   }, []);
@@ -247,6 +255,7 @@ export function useOnTapApp() {
     setBartenderData(null);
     setManagerData(null);
     setPreviousNights([]);
+    setAiReports([]);
     setSettingsData(null);
     clearBarContext();
     setView("bar-login");
@@ -535,6 +544,70 @@ export function useOnTapApp() {
     }
   }, []);
 
+  const loadAiReports = useCallback(async (nightId: string | null) => {
+    if (!nightId) {
+      setAiReports([]);
+      return;
+    }
+
+    setAiReportsLoading(true);
+    try {
+      const data = await getAiReports(nightId);
+      setAiReports(data.reports);
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setAiReportsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (view !== "manager" || session?.type === "staff") return;
+    loadAiReports(selectedNightId);
+  }, [view, session, selectedNightId, loadAiReports]);
+
+  const handleGenerateAiReport = useCallback(
+    async (nightId: string) => {
+      setAiReportGenerating(true);
+      try {
+        const data = await generateAiReport({ barNightId: nightId });
+        setAiReports((prev) => [
+          data.report,
+          ...prev.filter((report) => report.id !== data.report.id),
+        ]);
+        return true;
+      } catch (e) {
+        setError(getErrorMessage(e));
+        await loadAiReports(nightId);
+        return false;
+      } finally {
+        setAiReportGenerating(false);
+      }
+    },
+    [loadAiReports]
+  );
+
+  const handleDownloadAiReport = useCallback(async (reportId: string) => {
+    try {
+      const { blob, contentDisposition } = await downloadAiReport(reportId);
+      const filename =
+        contentDisposition?.match(/filename="?([^";]+)"?/)?.[1] ??
+        `ontap-ai-report-${reportId}.md`;
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      return true;
+    } catch (e) {
+      setError(getErrorMessage(e));
+      return false;
+    }
+  }, []);
+
   const handleRestockCategory = useCallback(
     async (categoryId: string) => {
       try {
@@ -636,9 +709,14 @@ export function useOnTapApp() {
     selectedNightId,
     setSelectedNightId,
     managerLoading,
+    aiReports,
+    aiReportsLoading,
+    aiReportGenerating,
     loadManagerData,
     handleCloseNight,
     handleExportNight,
+    handleGenerateAiReport,
+    handleDownloadAiReport,
 
     /* Settings */
     settingsData,

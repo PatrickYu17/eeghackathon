@@ -275,6 +275,47 @@ export type NightRecommendationsResponse = {
   note: string;
 };
 
+export type AiReportActionItem = {
+  priority: "high" | "medium" | "low";
+  title: string;
+  detail: string;
+};
+
+export type AiReportContent = {
+  title: string;
+  executiveSummary: string;
+  keyInsights: string[];
+  actionItems: AiReportActionItem[];
+  restockRecommendations: string[];
+  overpourRisks: string[];
+  markdown: string;
+};
+
+export type AiReport = {
+  id: string;
+  barAccountId: string;
+  barNightId: string;
+  generatedByManagerId: string | null;
+  provider: string;
+  model: string;
+  status: "completed" | "failed";
+  title: string;
+  executiveSummary: string | null;
+  reportJson: AiReportContent | Record<string, unknown> | null;
+  markdown: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AiReportsResponse = {
+  reports: AiReport[];
+};
+
+export type AiReportResponse = {
+  report: AiReport;
+};
+
 export type PurchaseOrderSummary = {
   id: string;
   orderNumber: string | null;

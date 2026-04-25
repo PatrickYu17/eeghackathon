@@ -1,6 +1,7 @@
 import { db } from "@repo/db";
 import {
   account as authAccounts,
+  aiReports,
   alerts,
   appSessions,
   auditLogs,
@@ -53,6 +54,8 @@ const app = new Hono();
 const cookieName = "on_tap_session";
 const barContextCookieName = "on_tap_bar_context";
 const sessionTtlSeconds = 60 * 60 * 24;
+const isProduction = process.env.NODE_ENV === "production";
+const cookieSameSite = isProduction ? "None" : "Lax";
 
 const uuidSchema = z.string().uuid();
 const barLookupSchema = z.object({
@@ -211,8 +214,8 @@ async function createBarContextCookie(c: Context, barAccountId: string) {
 
   setCookie(c, barContextCookieName, `${payload}.${signature}`, {
     httpOnly: true,
-    sameSite: "Lax",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: cookieSameSite,
+    secure: isProduction,
     maxAge: sessionTtlSeconds,
     path: "/",
   });
@@ -438,8 +441,8 @@ async function createAppSession(
 
   setCookie(c, cookieName, token, {
     httpOnly: true,
-    sameSite: "Lax",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: cookieSameSite,
+    secure: isProduction,
     maxAge: sessionTtlSeconds,
     path: "/",
   });
@@ -2577,6 +2580,541 @@ app.get("/inventory/history", async (c) => {
     .offset(offset);
 
   return c.json({ adjustments });
+});
+
+const aiReportRequestSchema = z.object({
+  barNightId: uuidSchema.optional(),
+});
+
+const aiReportActionItemSchema = z.object({
+  priority: z.enum(["high", "medium", "low"]),
+  title: z.string().min(1),
+  detail: z.string().min(1),
+});
+
+const aiReportContentSchema = z.object({
+  title: z.string().min(1),
+  executiveSummary: z.string().min(1),
+  keyInsights: z.array(z.string()).default([]),
+  actionItems: z.array(aiReportActionItemSchema).default([]),
+  restockRecommendations: z.array(z.string()).default([]),
+  overpourRisks: z.array(z.string()).default([]),
+  markdown: z.string().min(1),
+});
+
+type AiReportContent = z.infer<typeof aiReportContentSchema>;
+
+function isoDate(value: Date | string | null | undefined) {
+  if (!value) return null;
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function safeFilename(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 72) || "ontap-ai-report";
+}
+
+function serializeAiReport(row: typeof aiReports.$inferSelect) {
+  return {
+    id: row.id,
+    barAccountId: row.barAccountId,
+    barNightId: row.barNightId,
+    generatedByManagerId: row.generatedByManagerId,
+    provider: row.provider,
+    model: row.model,
+    status: row.status,
+    title: row.title,
+    executiveSummary: row.executiveSummary,
+    reportJson: row.reportJson,
+    markdown: row.markdown,
+    errorMessage: row.errorMessage,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+async function resolveReportNight(actor: ActorSession, barNightId?: string) {
+  if (barNightId && !uuidSchema.safeParse(barNightId).success) {
+    throw new Error("Invalid night id");
+  }
+
+  if (barNightId) {
+    const [night] = await db
+      .select()
+      .from(barNights)
+      .where(and(eq(barNights.id, barNightId), eq(barNights.barAccountId, actor.barAccountId)))
+      .limit(1);
+    if (!night) throw new Error("Night not found");
+    return night;
+  }
+
+  const activeNight = await getOrCreateActiveNight(actor.barAccountId, actor.actorId);
+  const [night] = await db
+    .select()
+    .from(barNights)
+    .where(and(eq(barNights.id, activeNight.id), eq(barNights.barAccountId, actor.barAccountId)))
+    .limit(1);
+  if (!night) throw new Error("Night not found");
+  return night;
+}
+
+async function buildAiReportSourceData(actor: ActorSession, barNightId?: string) {
+  const night = await resolveReportNight(actor, barNightId);
+  const [barAccount] = await db
+    .select({ name: barAccounts.name })
+    .from(barAccounts)
+    .where(eq(barAccounts.id, actor.barAccountId))
+    .limit(1);
+
+  const inventory = shapeCategoryDashboard(await currentInventoryRows(actor.barAccountId));
+
+  const usageByProductRows = await db
+    .select({
+      productId: usageLogs.productId,
+      productName: products.name,
+      categoryId: usageLogs.categoryId,
+      categoryName: inventoryCategories.name,
+      quantityUsed: sql<string>`COALESCE(SUM(${usageLogs.quantityUsed}), 0)`,
+    })
+    .from(usageLogs)
+    .leftJoin(products, eq(usageLogs.productId, products.id))
+    .leftJoin(inventoryCategories, eq(usageLogs.categoryId, inventoryCategories.id))
+    .where(
+      and(
+        eq(usageLogs.barAccountId, actor.barAccountId),
+        eq(usageLogs.barNightId, night.id),
+        isNull(usageLogs.reversedAt)
+      )
+    )
+    .groupBy(
+      usageLogs.productId,
+      usageLogs.categoryId,
+      products.name,
+      inventoryCategories.name
+    );
+
+  const usageByCategoryRows = await db
+    .select({
+      categoryId: usageLogs.categoryId,
+      categoryName: inventoryCategories.name,
+      bottlesLogged: sql<string>`COALESCE(SUM(${usageLogs.quantityUsed}), 0)`,
+    })
+    .from(usageLogs)
+    .leftJoin(inventoryCategories, eq(usageLogs.categoryId, inventoryCategories.id))
+    .where(
+      and(
+        eq(usageLogs.barAccountId, actor.barAccountId),
+        eq(usageLogs.barNightId, night.id),
+        isNull(usageLogs.reversedAt)
+      )
+    )
+    .groupBy(usageLogs.categoryId, inventoryCategories.name);
+
+  const posRows = await db
+    .select({
+      categoryId: posEstimates.categoryId,
+      categoryName: inventoryCategories.name,
+      productId: posEstimates.productId,
+      productName: products.name,
+      drinkCount: posEstimates.drinkCount,
+      grossSales: posEstimates.grossSales,
+      source: posEstimates.source,
+      notes: posEstimates.notes,
+      createdAt: posEstimates.createdAt,
+    })
+    .from(posEstimates)
+    .leftJoin(inventoryCategories, eq(posEstimates.categoryId, inventoryCategories.id))
+    .leftJoin(products, eq(posEstimates.productId, products.id))
+    .where(and(eq(posEstimates.barAccountId, actor.barAccountId), eq(posEstimates.barNightId, night.id)))
+    .orderBy(desc(posEstimates.createdAt));
+
+  const alertRows = await db
+    .select({
+      id: alerts.id,
+      type: alerts.type,
+      severity: alerts.severity,
+      status: alerts.status,
+      title: alerts.title,
+      message: alerts.message,
+      triggeredAt: alerts.triggeredAt,
+      categoryName: inventoryCategories.name,
+      productName: products.name,
+    })
+    .from(alerts)
+    .leftJoin(inventoryCategories, eq(alerts.categoryId, inventoryCategories.id))
+    .leftJoin(products, eq(alerts.productId, products.id))
+    .where(and(eq(alerts.barAccountId, actor.barAccountId), eq(alerts.barNightId, night.id)))
+    .orderBy(desc(alerts.triggeredAt));
+
+  const staffRows = await db
+    .select({
+      staffName: staffMembers.name,
+      status: staffShifts.status,
+      startedAt: staffShifts.startedAt,
+      endedAt: staffShifts.endedAt,
+    })
+    .from(staffShifts)
+    .innerJoin(staffMembers, eq(staffShifts.staffMemberId, staffMembers.id))
+    .where(and(eq(staffShifts.barAccountId, actor.barAccountId), eq(staffShifts.barNightId, night.id)))
+    .orderBy(staffShifts.startedAt);
+
+  const usageByCategory = usageByCategoryRows.map((row) => ({
+    categoryId: row.categoryId,
+    categoryName: row.categoryName ?? "Uncategorized",
+    bottlesLogged: Number(row.bottlesLogged ?? 0),
+  }));
+
+  const posByCategory = new Map<
+    string,
+    { categoryId: string; categoryName: string; posDrinkCount: number; grossSales: number }
+  >();
+  for (const row of posRows) {
+    if (!row.categoryId) continue;
+    const existing = posByCategory.get(row.categoryId) ?? {
+      categoryId: row.categoryId,
+      categoryName: row.categoryName ?? "Uncategorized",
+      posDrinkCount: 0,
+      grossSales: 0,
+    };
+    existing.posDrinkCount += Number(row.drinkCount ?? 0);
+    existing.grossSales += Number(row.grossSales ?? 0);
+    posByCategory.set(row.categoryId, existing);
+  }
+
+  const usageByCategoryMap = new Map(
+    usageByCategory
+      .filter((row) => row.categoryId)
+      .map((row) => [row.categoryId!, row])
+  );
+
+  const variance = [];
+  const varianceCategoryIds = new Set([
+    ...usageByCategoryMap.keys(),
+    ...posByCategory.keys(),
+  ]);
+  for (const categoryId of varianceCategoryIds) {
+    const usage = usageByCategoryMap.get(categoryId);
+    const pos = posByCategory.get(categoryId);
+    const bottlesLogged = usage?.bottlesLogged ?? 0;
+    const posDrinkCount = pos?.posDrinkCount ?? 0;
+    if (bottlesLogged === 0 && posDrinkCount === 0) continue;
+
+    let severity: "high" | "low" | "missing_pos" | null = null;
+    const ratio = posDrinkCount === 0 ? Infinity : bottlesLogged / posDrinkCount;
+    if (posDrinkCount === 0 && bottlesLogged > 0) severity = "missing_pos";
+    else if (ratio > 1.5) severity = "high";
+    else if (ratio < 0.7) severity = "low";
+
+    if (!severity) continue;
+    variance.push({
+      categoryId,
+      categoryName: usage?.categoryName ?? pos?.categoryName ?? "Uncategorized",
+      bottlesLogged,
+      posDrinkCount,
+      ratio: Number.isFinite(ratio) ? Math.round(ratio * 100) / 100 : null,
+      discrepancyBottles: bottlesLogged - posDrinkCount,
+      severity,
+    });
+  }
+
+  const inventorySnapshot = inventory.map((category) => ({
+    categoryId: category.id,
+    categoryName: category.name,
+    type: category.type,
+    currentStock: category.currentStock,
+    fullStock: category.parLevel,
+    products: category.products.map((product) => ({
+      productId: product.id,
+      productName: product.name,
+      currentStock: product.currentStock,
+      fullStock: product.parLevel,
+      reorderPoint: product.reorderPoint,
+      unitType: product.unitType,
+    })),
+  }));
+
+  const restockCandidates = inventorySnapshot.flatMap((category) =>
+    category.products
+      .filter((product) => product.currentStock < product.fullStock)
+      .map((product) => ({
+        categoryName: category.categoryName,
+        productName: product.productName,
+        currentStock: product.currentStock,
+        fullStock: product.fullStock,
+        gap: Math.max(0, product.fullStock - product.currentStock),
+        unitType: product.unitType,
+      }))
+  );
+
+  const usageByProduct = usageByProductRows.map((row) => ({
+    productId: row.productId,
+    productName: row.productName ?? "Unknown",
+    categoryId: row.categoryId,
+    categoryName: row.categoryName ?? "Uncategorized",
+    quantityUsed: Number(row.quantityUsed ?? 0),
+  }));
+
+  const posEstimatesForReport = posRows.map((row) => ({
+    categoryName: row.categoryName ?? "Uncategorized",
+    productName: row.productName ?? null,
+    drinkCount: Number(row.drinkCount ?? 0),
+    grossSales: row.grossSales ? Number(row.grossSales) : null,
+    source: row.source,
+    notes: row.notes,
+    createdAt: isoDate(row.createdAt),
+  }));
+
+  const alertData = alertRows.map((row) => ({
+    type: row.type,
+    severity: row.severity,
+    status: row.status,
+    title: row.title,
+    message: row.message,
+    categoryName: row.categoryName ?? "General",
+    productName: row.productName ?? null,
+    triggeredAt: isoDate(row.triggeredAt),
+  }));
+
+  const totalBottlesLogged = usageByProduct.reduce((sum, row) => sum + row.quantityUsed, 0);
+  const totalPosDrinks = posEstimatesForReport.reduce((sum, row) => sum + row.drinkCount, 0);
+  const totalGrossSales = posEstimatesForReport.reduce((sum, row) => sum + (row.grossSales ?? 0), 0);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    bar: { id: actor.barAccountId, name: barAccount?.name ?? "Bar" },
+    manager: { id: actor.actorId, name: actor.name },
+    night: {
+      id: night.id,
+      businessDate: night.businessDate,
+      status: night.status,
+      openedAt: isoDate(night.openedAt),
+      closedAt: isoDate(night.closedAt),
+    },
+    summary: {
+      totalBottlesLogged,
+      totalPosDrinks,
+      totalGrossSales,
+      alertCount: alertData.length,
+      criticalAlertCount: alertData.filter((alert) => alert.severity === "critical").length,
+      openAlertCount: alertData.filter((alert) => alert.status === "open").length,
+      staffOnDutyCount: staffRows.length,
+    },
+    staffOnDuty: staffRows.map((row) => ({
+      name: row.staffName,
+      status: row.status,
+      startedAt: isoDate(row.startedAt),
+      endedAt: isoDate(row.endedAt),
+    })),
+    usageByCategory,
+    usageByProduct,
+    posByCategory: Array.from(posByCategory.values()),
+    posEstimates: posEstimatesForReport,
+    variance,
+    alerts: alertData,
+    inventorySnapshot,
+    restockCandidates,
+  };
+}
+
+function extractJsonObject(text: string) {
+  const trimmed = text.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced?.[1]) return JSON.parse(fenced[1].trim());
+    const first = trimmed.indexOf("{");
+    const last = trimmed.lastIndexOf("}");
+    if (first >= 0 && last > first) return JSON.parse(trimmed.slice(first, last + 1));
+    throw new Error("AI response did not contain valid JSON");
+  }
+}
+
+async function generateAiReportContent(sourceData: Record<string, unknown>) {
+  const apiKey = process.env.TERACAST_API_KEY;
+  if (!apiKey) throw new Error("TERACAST_API_KEY is not configured");
+
+  const endpoint =
+    process.env.TERACAST_CHAT_COMPLETIONS_URL ??
+    "https://inference.teracast.net/v1/chat/completions";
+  const model = process.env.TERACAST_MODEL ?? "moonshotai/kimi-k2.6";
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      max_tokens: 2400,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are OnTap's bar operations analyst. Use only the supplied data. Return strict JSON with this shape: {title, executiveSummary, keyInsights, actionItems, restockRecommendations, overpourRisks, markdown}. Keep recommendations direct, practical, and manager-ready. Do not invent facts.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            task:
+              "Generate an actionable end-of-night manager report. Prioritize restock gaps, overpour/variance risks, alert patterns, and immediate next-shift actions.",
+            sourceData,
+          }),
+        },
+      ],
+    }),
+  });
+
+  const raw = await response.text();
+  const parsedBody = raw ? JSON.parse(raw) : null;
+  if (!response.ok) {
+    const message =
+      parsedBody?.error?.message ??
+      parsedBody?.message ??
+      `Teracast request failed with status ${response.status}`;
+    throw new Error(String(message));
+  }
+
+  const messageContent = parsedBody?.choices?.[0]?.message?.content;
+  if (typeof messageContent !== "string") {
+    throw new Error("Teracast returned an empty report response");
+  }
+
+  const content = aiReportContentSchema.parse(extractJsonObject(messageContent));
+  return { model, content };
+}
+
+async function getOwnedAiReport(actor: ActorSession, reportId: string) {
+  if (!uuidSchema.safeParse(reportId).success) return null;
+  const [report] = await db
+    .select()
+    .from(aiReports)
+    .where(and(eq(aiReports.id, reportId), eq(aiReports.barAccountId, actor.barAccountId)))
+    .limit(1);
+  return report ?? null;
+}
+
+app.post("/boss/ai-reports", async (c) => {
+  const actor = await requireActor(c, "manager");
+  if (!actor) return jsonError(c, 401, "Manager session required");
+
+  const body = aiReportRequestSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) return c.json({ error: body.error.flatten() }, 400);
+
+  let sourceData: Awaited<ReturnType<typeof buildAiReportSourceData>>;
+  try {
+    sourceData = await buildAiReportSourceData(actor, body.data.barNightId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to load report data";
+    return jsonError(c, message === "Night not found" ? 404 : 400, message);
+  }
+
+  try {
+    const { model, content } = await generateAiReportContent(sourceData as Record<string, unknown>);
+    const [report] = await db
+      .insert(aiReports)
+      .values({
+        barAccountId: actor.barAccountId,
+        barNightId: sourceData.night.id,
+        generatedByManagerId: actor.actorId,
+        provider: "teracast",
+        model,
+        status: "completed",
+        title: content.title,
+        executiveSummary: content.executiveSummary,
+        reportJson: content,
+        markdown: content.markdown,
+        sourceDataJson: sourceData as Record<string, unknown>,
+      })
+      .returning();
+
+    await audit(actor, "ai_report_generated", "ai_report", report.id, {
+      barNightId: sourceData.night.id,
+      model,
+    });
+
+    return c.json({ report: serializeAiReport(report) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "AI report generation failed";
+    const [failedReport] = await db
+      .insert(aiReports)
+      .values({
+        barAccountId: actor.barAccountId,
+        barNightId: sourceData.night.id,
+        generatedByManagerId: actor.actorId,
+        provider: "teracast",
+        model: process.env.TERACAST_MODEL ?? "moonshotai/kimi-k2.6",
+        status: "failed",
+        title: `AI report failed for ${sourceData.night.businessDate}`,
+        executiveSummary: null,
+        reportJson: null,
+        markdown: null,
+        sourceDataJson: sourceData as Record<string, unknown>,
+        errorMessage: message,
+      })
+      .returning();
+
+    await audit(actor, "ai_report_failed", "ai_report", failedReport.id, {
+      barNightId: sourceData.night.id,
+      errorMessage: message,
+    });
+
+    return c.json({ error: message, report: serializeAiReport(failedReport) }, 502);
+  }
+});
+
+app.get("/boss/ai-reports", async (c) => {
+  const actor = await requireActor(c, "manager");
+  if (!actor) return jsonError(c, 401, "Manager session required");
+
+  const barNightId = c.req.query("barNightId");
+  if (barNightId && !uuidSchema.safeParse(barNightId).success) {
+    return jsonError(c, 400, "Invalid night id");
+  }
+
+  const where = barNightId
+    ? and(eq(aiReports.barAccountId, actor.barAccountId), eq(aiReports.barNightId, barNightId))
+    : eq(aiReports.barAccountId, actor.barAccountId);
+
+  const reports = await db
+    .select()
+    .from(aiReports)
+    .where(where)
+    .orderBy(desc(aiReports.createdAt))
+    .limit(50);
+
+  return c.json({ reports: reports.map(serializeAiReport) });
+});
+
+app.get("/boss/ai-reports/:id/download", async (c) => {
+  const actor = await requireActor(c, "manager");
+  if (!actor) return jsonError(c, 401, "Manager session required");
+
+  const report = await getOwnedAiReport(actor, c.req.param("id"));
+  if (!report) return jsonError(c, 404, "AI report not found");
+  if (!report.markdown) return jsonError(c, 404, "AI report has no downloadable markdown");
+
+  c.header("Content-Type", "text/markdown; charset=utf-8");
+  c.header(
+    "Content-Disposition",
+    `attachment; filename="${safeFilename(report.title)}.md"`
+  );
+  return c.body(report.markdown);
+});
+
+app.get("/boss/ai-reports/:id", async (c) => {
+  const actor = await requireActor(c, "manager");
+  if (!actor) return jsonError(c, 401, "Manager session required");
+
+  const report = await getOwnedAiReport(actor, c.req.param("id"));
+  if (!report) return jsonError(c, 404, "AI report not found");
+  return c.json({ report: serializeAiReport(report) });
 });
 
 app.get("/boss/report-summary", async (c) => {

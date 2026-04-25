@@ -1,5 +1,7 @@
 import { api, apiBlob } from "./api";
 import type {
+  AiReportResponse,
+  AiReportsResponse,
   BarAccountSummary,
   BartenderDashboardResponse,
   BossDashboardResponse,
@@ -397,6 +399,33 @@ export function getReportReorders(barNightId?: string) {
 
 export function getNightRecommendations(nightId: string) {
   return api<import("./on-tap-types").NightRecommendationsResponse>(`/api/on-tap/boss/night-recommendations/${encodeURIComponent(nightId)}`, {
+    credentials: "include",
+  });
+}
+
+export function getAiReports(barNightId?: string) {
+  const qs = barNightId ? `?barNightId=${encodeURIComponent(barNightId)}` : "";
+  return api<AiReportsResponse>(`/api/on-tap/boss/ai-reports${qs}`, {
+    credentials: "include",
+  });
+}
+
+export function generateAiReport(input: { barNightId: string }) {
+  return api<AiReportResponse>("/api/on-tap/boss/ai-reports", {
+    method: "POST",
+    credentials: "include",
+    body: JSON.stringify(input),
+  });
+}
+
+export function getAiReport(id: string) {
+  return api<AiReportResponse>(`/api/on-tap/boss/ai-reports/${encodeURIComponent(id)}`, {
+    credentials: "include",
+  });
+}
+
+export function downloadAiReport(id: string) {
+  return apiBlob(`/api/on-tap/boss/ai-reports/${encodeURIComponent(id)}/download`, {
     credentials: "include",
   });
 }

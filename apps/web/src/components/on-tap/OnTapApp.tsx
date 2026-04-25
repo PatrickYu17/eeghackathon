@@ -301,6 +301,11 @@ export function OnTapApp() {
           onCloseNight={handleCloseNight}
           onExport={app.handleExportNight}
           onRestockCategory={app.handleRestockCategory}
+          aiReports={app.aiReports}
+          aiReportsLoading={app.aiReportsLoading}
+          aiReportGenerating={app.aiReportGenerating}
+          onGenerateAiReport={app.handleGenerateAiReport}
+          onDownloadAiReport={app.handleDownloadAiReport}
           onStaffMode={() => app.setView("staff-login")}
           loading={app.managerLoading}
           barName={app.barAccount?.name || "Your Bar"}

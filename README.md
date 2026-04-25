@@ -5,7 +5,7 @@ Bun monorepo scaffold with Next.js frontend and Hono REST API.
 ## Stack
 
 - **Monorepo**: Bun workspaces + Turborepo
-- **Frontend**: Next.js 15 (App Router) + Tailwind CSS
+- **Frontend**: Next.js 16 (App Router) + Tailwind CSS
 - **Backend**: Hono (REST) + BetterAuth + Drizzle ORM
 - **Database**: PostgreSQL (self-hosted)
 - **API**: REST
@@ -72,4 +72,30 @@ Deploy `apps/web` and `apps/api` as **two separate Vercel projects** from the sa
 - **Web project**: Root directory `apps/web`
 - **API project**: Root directory `apps/api`
 
-Make sure Vercel installs workspace packages (Build & Install Settings → Package Manager: `bun`).
+Each app has a `vercel.json` that installs from the monorepo root and builds with a filtered Turbo command, so workspace packages are available during Vercel builds. Set the package manager to `bun` in Vercel if it is not auto-detected.
+
+Use a hosted PostgreSQL database for deployed environments; the Docker database URL is local-only.
+
+API project environment variables:
+
+```bash
+DATABASE_URL=postgres://...
+BETTER_AUTH_SECRET=<strong-random-secret>
+BETTER_AUTH_URL=https://<api-project>.vercel.app
+WEB_URL=https://<web-project>.vercel.app
+TERACAST_API_KEY=<optional>
+TERACAST_MODEL=moonshotai/kimi-k2.6
+TERACAST_CHAT_COMPLETIONS_URL=https://inference.teracast.net/v1/chat/completions
+```
+
+Web project environment variables:
+
+```bash
+NEXT_PUBLIC_API_URL=https://<api-project>.vercel.app
+```
+
+Run migrations against the production database before the first deploy and after schema changes:
+
+```bash
+DATABASE_URL=postgres://... bun run db:migrate
+```

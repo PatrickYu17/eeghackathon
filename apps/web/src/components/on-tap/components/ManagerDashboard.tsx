@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
-import type { ManagerNightSummary, OnTapCategory } from "../../../lib/on-tap-types";
+import type { AiReport, AiReportContent, ManagerNightSummary, OnTapCategory } from "../../../lib/on-tap-types";
 
 export function ManagerDashboard({
   nights,
@@ -14,6 +14,11 @@ export function ManagerDashboard({
   onCloseNight,
   onExport,
   onRestockCategory,
+  aiReports = [],
+  aiReportsLoading = false,
+  aiReportGenerating = false,
+  onGenerateAiReport,
+  onDownloadAiReport,
   onStaffMode,
   loading,
   barName,
@@ -27,6 +32,11 @@ export function ManagerDashboard({
   onCloseNight?: () => Promise<boolean>;
   onExport?: (nightId: string) => Promise<boolean>;
   onRestockCategory?: (categoryId: string) => Promise<boolean>;
+  aiReports?: AiReport[];
+  aiReportsLoading?: boolean;
+  aiReportGenerating?: boolean;
+  onGenerateAiReport?: (nightId: string) => Promise<boolean>;
+  onDownloadAiReport?: (reportId: string) => Promise<boolean>;
   onStaffMode?: () => void;
   loading: boolean;
   barName?: string;
@@ -93,6 +103,13 @@ export function ManagerDashboard({
       type: allResolved ? ("resolved" as const) : hasCritical ? ("danger" as const) : ("warning" as const),
     };
   });
+
+  const latestAiReport = aiReports[0] ?? null;
+  const latestAiContent =
+    latestAiReport?.status === "completed" && latestAiReport.reportJson
+      ? (latestAiReport.reportJson as AiReportContent)
+      : null;
+  const savedAiReports = aiReports.filter((report) => report.status === "completed");
 
   const maxCount = byCategory.length > 0 ? Math.max(...byCategory.map((b) => b.count)) : 0;
 
@@ -200,6 +217,89 @@ export function ManagerDashboard({
                   <p style={styles.statLabel}>bartenders on</p>
                   <p className="stat-number" style={styles.statNum}>{selectedNight.bartendersOn}</p>
                 </div>
+              </div>
+
+              {/* AI Insights */}
+              <div style={{ ...styles.section, animation: "fadeInUp 0.45s cubic-bezier(0.25, 1, 0.5, 1) 0.12s both" }}>
+                <div style={styles.sectionHeader}>
+                  <div>
+                    <p style={styles.sectionLabel}>AI insights</p>
+                    <p style={styles.aiSubtext}>Actionable report generated from inventory, alerts, POS variance, and usage.</p>
+                  </div>
+                  <button
+                    className="btn-animate"
+                    style={{ ...styles.generateBtn, ...(aiReportGenerating ? styles.generateBtnDisabled : {}) }}
+                    onClick={() => onGenerateAiReport?.(selectedNight.id)}
+                    disabled={aiReportGenerating || aiReportsLoading}
+                  >
+                    {aiReportGenerating ? "generating..." : "Generate AI Report"}
+                  </button>
+                </div>
+
+                {aiReportsLoading ? (
+                  <p style={styles.noAlerts}>Loading saved AI reports...</p>
+                ) : latestAiReport?.status === "failed" ? (
+                  <div style={styles.aiErrorBox}>
+                    <p style={styles.aiErrorTitle}>Latest AI report failed</p>
+                    <p style={styles.aiErrorText}>{latestAiReport.errorMessage ?? "Try generating again."}</p>
+                  </div>
+                ) : latestAiContent ? (
+                  <div style={styles.aiReportBox}>
+                    <div style={styles.aiReportHeader}>
+                      <div>
+                        <p style={styles.aiReportTitle}>{latestAiReport.title}</p>
+                        <p style={styles.reportMeta}>
+                          Generated {new Date(latestAiReport.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                        </p>
+                      </div>
+                      <button className="btn-animate" style={styles.downloadReportBtn} onClick={() => onDownloadAiReport?.(latestAiReport.id)}>
+                        download
+                      </button>
+                    </div>
+                    <p style={styles.aiSummary}>{latestAiContent.executiveSummary}</p>
+                    {latestAiContent.keyInsights.length > 0 && (
+                      <div style={styles.aiColumnBlock}>
+                        <p style={styles.aiMiniLabel}>key insights</p>
+                        <div style={styles.aiList}>
+                          {latestAiContent.keyInsights.slice(0, 4).map((insight) => (
+                            <div key={insight} style={styles.aiListItem}>{insight}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {latestAiContent.actionItems.length > 0 && (
+                      <div style={styles.aiColumnBlock}>
+                        <p style={styles.aiMiniLabel}>next actions</p>
+                        <div style={styles.aiList}>
+                          {latestAiContent.actionItems.slice(0, 4).map((item) => (
+                            <div key={`${item.priority}-${item.title}`} style={styles.actionRow}>
+                              <span style={{ ...styles.priorityPill, ...(item.priority === "high" ? styles.priorityHigh : item.priority === "medium" ? styles.priorityMedium : styles.priorityLow) }}>
+                                {item.priority}
+                              </span>
+                              <div>
+                                <p style={styles.actionTitle}>{item.title}</p>
+                                <p style={styles.actionDetail}>{item.detail}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p style={styles.noAlerts}>No AI reports saved for this night yet.</p>
+                )}
+
+                {savedAiReports.length > 1 && (
+                  <div style={styles.savedReportsList}>
+                    {savedAiReports.slice(1, 4).map((report) => (
+                      <div key={report.id} style={styles.savedReportRow}>
+                        <span style={styles.savedReportTitle}>{report.title}</span>
+                        <button style={styles.savedReportDownload} onClick={() => onDownloadAiReport?.(report.id)}>download</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {restockCategories.length > 0 && (
@@ -345,4 +445,32 @@ const styles: Record<string, React.CSSProperties> = {
   alertDot: { width: "8px", height: "8px", minWidth: "8px", borderRadius: "50%" },
   alertText: { fontFamily: "'Inter', sans-serif", fontSize: "13px", color: "#0d1f3c", flex: 1 },
   alertTime: { fontFamily: "'Inter', sans-serif", fontSize: "12px", fontWeight: "500", whiteSpace: "nowrap" },
+  sectionHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", marginBottom: "16px" },
+  aiSubtext: { fontFamily: "'Inter', sans-serif", fontSize: "12px", color: "#9ca3af", margin: "-8px 0 0" },
+  generateBtn: { fontFamily: "'Inter', sans-serif", fontSize: "13px", fontWeight: "600", color: "#ffffff", background: "#0d1f3c", border: "none", borderRadius: "8px", padding: "9px 14px", cursor: "pointer", whiteSpace: "nowrap" },
+  generateBtnDisabled: { opacity: 0.65, cursor: "wait" },
+  aiReportBox: { border: "1px solid #dbeafe", background: "#f8fbff", borderRadius: "12px", padding: "16px", display: "flex", flexDirection: "column", gap: "14px" },
+  aiReportHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px" },
+  aiReportTitle: { fontFamily: "'Inter', sans-serif", fontSize: "16px", fontWeight: "700", color: "#0d1f3c", margin: "0 0 4px" },
+  reportMeta: { fontFamily: "'Inter', sans-serif", fontSize: "12px", color: "#6b7280", margin: 0 },
+  downloadReportBtn: { fontFamily: "'Inter', sans-serif", fontSize: "12px", fontWeight: "600", color: "#0d1f3c", background: "#ffffff", border: "1px solid #bfdbfe", borderRadius: "8px", padding: "8px 12px", cursor: "pointer" },
+  aiSummary: { fontFamily: "'Inter', sans-serif", fontSize: "14px", lineHeight: 1.55, color: "#1f2937", margin: 0 },
+  aiColumnBlock: { display: "flex", flexDirection: "column", gap: "8px" },
+  aiMiniLabel: { fontFamily: "'Inter', sans-serif", fontSize: "11px", fontWeight: "700", color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.08em", margin: 0 },
+  aiList: { display: "flex", flexDirection: "column", gap: "8px" },
+  aiListItem: { fontFamily: "'Inter', sans-serif", fontSize: "13px", color: "#374151", background: "#ffffff", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "10px 12px" },
+  actionRow: { display: "grid", gridTemplateColumns: "auto 1fr", gap: "10px", alignItems: "start", background: "#ffffff", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "10px 12px" },
+  priorityPill: { fontFamily: "'Inter', sans-serif", fontSize: "10px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.06em", borderRadius: "999px", padding: "5px 8px" },
+  priorityHigh: { background: "#fee2e2", color: "#991b1b" },
+  priorityMedium: { background: "#fef3c7", color: "#92400e" },
+  priorityLow: { background: "#dcfce7", color: "#166534" },
+  actionTitle: { fontFamily: "'Inter', sans-serif", fontSize: "13px", fontWeight: "700", color: "#0d1f3c", margin: "0 0 3px" },
+  actionDetail: { fontFamily: "'Inter', sans-serif", fontSize: "12px", lineHeight: 1.45, color: "#4b5563", margin: 0 },
+  aiErrorBox: { border: "1px solid #fecaca", background: "#fef2f2", borderRadius: "10px", padding: "14px 16px" },
+  aiErrorTitle: { fontFamily: "'Inter', sans-serif", fontSize: "13px", fontWeight: "700", color: "#991b1b", margin: "0 0 4px" },
+  aiErrorText: { fontFamily: "'Inter', sans-serif", fontSize: "12px", color: "#7f1d1d", margin: 0 },
+  savedReportsList: { display: "flex", flexDirection: "column", gap: "8px", marginTop: "12px" },
+  savedReportRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "9px 12px", background: "#ffffff" },
+  savedReportTitle: { fontFamily: "'Inter', sans-serif", fontSize: "12px", color: "#374151", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  savedReportDownload: { fontFamily: "'Inter', sans-serif", fontSize: "12px", color: "#0d1f3c", background: "transparent", border: "none", cursor: "pointer", padding: 0 },
 };

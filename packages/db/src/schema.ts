@@ -1137,6 +1137,7 @@ export const barAccountRelations = relations(barAccounts, ({ one, many }) => ({
   staffShifts: many(staffShifts),
   posEstimates: many(posEstimates),
   alerts: many(alerts),
+  aiReports: many(aiReports),
   inventoryLocations: many(inventoryLocations),
   inventoryItems: many(inventoryItems),
   inventoryCounts: many(inventoryCounts),
@@ -1247,6 +1248,7 @@ export const barNightRelations = relations(barNights, ({ one, many }) => ({
   posEstimates: many(posEstimates),
   alerts: many(alerts),
   usageLogs: many(usageLogs),
+  aiReports: many(aiReports),
 }));
 
 export const staffShiftRelations = relations(staffShifts, ({ one, many }) => ({
@@ -1324,6 +1326,21 @@ export const alertRelations = relations(alerts, ({ one }) => ({
   }),
   acknowledgedByManager: one(managers, {
     fields: [alerts.acknowledgedByManagerId],
+    references: [managers.id],
+  }),
+}));
+
+export const aiReportRelations = relations(aiReports, ({ one }) => ({
+  barAccount: one(barAccounts, {
+    fields: [aiReports.barAccountId],
+    references: [barAccounts.id],
+  }),
+  barNight: one(barNights, {
+    fields: [aiReports.barNightId],
+    references: [barNights.id],
+  }),
+  generatedByManager: one(managers, {
+    fields: [aiReports.generatedByManagerId],
     references: [managers.id],
   }),
 }));
@@ -1585,6 +1602,9 @@ export type NewPosEstimate = typeof posEstimates.$inferInsert;
 
 export type Alert = typeof alerts.$inferSelect;
 export type NewAlert = typeof alerts.$inferInsert;
+
+export type AiReport = typeof aiReports.$inferSelect;
+export type NewAiReport = typeof aiReports.$inferInsert;
 
 export type InventoryLocation = typeof inventoryLocations.$inferSelect;
 export type NewInventoryLocation = typeof inventoryLocations.$inferInsert;
